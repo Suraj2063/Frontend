@@ -5,7 +5,6 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>देवनागरी ASR - Devanagari Live Transcription</title>
   <style>
-    /* ─── Reset & Base ─── */
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
     :root {
@@ -16,7 +15,6 @@
       --accent:       #f97316;
       --accent-hover: #ea6c0a;
       --accent-stop:  #ef4444;
-      --accent-stop-h:#dc2626;
       --text-primary: #e6edf3;
       --text-muted:   #8b949e;
       --text-deva:    #fbbf24;
@@ -69,7 +67,7 @@
       letter-spacing: 0.5px;
     }
 
-    /* ─── Main Container ─── */
+    /* ─── Container ─── */
     .container {
       width: 100%;
       max-width: 760px;
@@ -92,7 +90,7 @@
       text-transform: uppercase;
       letter-spacing: 1px;
       color: var(--text-muted);
-      margin-bottom: 12px;
+      margin-bottom: 14px;
     }
 
     /* ─── URL Input ─── */
@@ -132,11 +130,12 @@
     .btn-connect:hover { background: #2563eb; transform: translateY(-1px); }
     .btn-connect:active { transform: translateY(0); }
 
-    /* ─── Status Indicator ─── */
+    /* ─── Status Bar ─── */
     .status-bar {
       display: flex;
       align-items: center;
       gap: 10px;
+      margin-top: 12px;
       flex-wrap: wrap;
     }
     .status-dot {
@@ -147,13 +146,19 @@
       flex-shrink: 0;
       transition: background 0.3s;
     }
-    .status-dot.connected  { background: var(--green); box-shadow: 0 0 8px var(--green); }
-    .status-dot.recording  {
+    .status-dot.connected {
+      background: var(--green);
+      box-shadow: 0 0 8px var(--green);
+    }
+    .status-dot.recording {
       background: var(--red);
       box-shadow: 0 0 8px var(--red);
       animation: pulse 1s infinite;
     }
-    .status-dot.processing { background: var(--accent); box-shadow: 0 0 8px var(--accent); }
+    .status-dot.processing {
+      background: var(--accent);
+      box-shadow: 0 0 8px var(--accent);
+    }
     @keyframes pulse {
       0%, 100% { opacity: 1; transform: scale(1); }
       50%       { opacity: 0.5; transform: scale(0.85); }
@@ -163,12 +168,54 @@
       color: var(--text-muted);
     }
 
-    /* ─── Control Panel ─── */
+    /* ─── Visualizer ─── */
+    #visualizer {
+      width: 100%;
+      height: 64px;
+      border-radius: 8px;
+      background: var(--bg-input);
+      display: block;
+    }
+
+    /* ─── VAD + Stats Row ─── */
+    .vad-stats-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-top: 8px;
+      padding: 0 2px;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+    #vad-indicator {
+      font-size: 0.83rem;
+      color: var(--text-muted);
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      transition: color 0.3s;
+    }
+    #vad-indicator.active {
+      color: var(--green);
+    }
+    #stats-box {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      font-family: 'Consolas', 'Courier New', monospace;
+      background: var(--bg-dark);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 3px 9px;
+      letter-spacing: 0.2px;
+    }
+
+    /* ─── Controls ─── */
     .controls {
       display: flex;
       flex-direction: column;
       align-items: center;
-      gap: 20px;
+      gap: 18px;
+      margin-top: 20px;
     }
 
     /* ─── Record Button ─── */
@@ -185,8 +232,8 @@
       display: flex;
       align-items: center;
       justify-content: center;
-      position: relative;
       outline: none;
+      user-select: none;
     }
     .btn-record:hover:not(:disabled) {
       background: rgba(249, 115, 22, 0.12);
@@ -199,34 +246,26 @@
     }
     @keyframes ring-pulse {
       0%, 100% { box-shadow: 0 0 0 0 rgba(239,68,68,0.4); }
-      50%       { box-shadow: 0 0 0 14px rgba(239,68,68,0); }
+      50%       { box-shadow: 0 0 0 16px rgba(239,68,68,0); }
     }
     .btn-record:disabled {
-      opacity: 0.4;
+      opacity: 0.35;
       cursor: not-allowed;
       transform: none;
     }
     .btn-label {
-      font-size: 0.85rem;
+      font-size: 0.84rem;
       color: var(--text-muted);
       text-align: center;
-    }
-
-    /* ─── Audio Visualizer ─── */
-    #visualizer {
-      width: 100%;
-      height: 60px;
-      border-radius: 8px;
-      background: var(--bg-input);
-      display: block;
     }
 
     /* ─── Settings Row ─── */
     .settings-row {
       display: flex;
       align-items: center;
-      gap: 16px;
+      gap: 20px;
       flex-wrap: wrap;
+      justify-content: center;
     }
     .setting-group {
       display: flex;
@@ -241,28 +280,50 @@
     .setting-group input[type="range"] {
       accent-color: var(--accent);
       cursor: pointer;
+      width: 90px;
     }
     .setting-val {
       font-size: 0.83rem;
       color: var(--text-primary);
-      min-width: 30px;
+      min-width: 28px;
+      font-family: monospace;
     }
     .setting-group input[type="checkbox"] {
       accent-color: var(--accent);
-      width: 15px; height: 15px;
+      width: 15px;
+      height: 15px;
       cursor: pointer;
     }
 
-    /* ─── Transcript Area ─── */
-    .transcript-wrapper {
-      position: relative;
+    /* ─── Processing Overlay ─── */
+    .processing-overlay {
+      display: none;
+      align-items: center;
+      gap: 10px;
+      color: var(--accent);
+      font-size: 0.9rem;
+      font-weight: 500;
     }
+    .processing-overlay.show { display: flex; }
+    .spinner {
+      width: 18px;
+      height: 18px;
+      border: 2px solid transparent;
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ─── Transcript Area ─── */
+    .transcript-wrapper { position: relative; }
     .transcript-actions {
       position: absolute;
       top: 8px;
       right: 8px;
       display: flex;
       gap: 6px;
+      z-index: 2;
     }
     .btn-sm {
       background: var(--bg-input);
@@ -287,13 +348,14 @@
       border-radius: 10px;
       padding: 48px 16px 16px;
       font-size: clamp(1.2rem, 3vw, 1.7rem);
-      line-height: 1.8;
+      line-height: 1.85;
       color: var(--text-deva);
       font-family: 'Noto Sans Devanagari', 'Mangal', 'Arial Unicode MS', serif;
       resize: vertical;
       outline: none;
       transition: border-color 0.2s;
       word-break: break-word;
+      overflow-y: auto;
     }
     #transcript-box:focus { border-color: var(--accent); }
     #transcript-box.empty::before {
@@ -304,32 +366,19 @@
       pointer-events: none;
     }
 
-    /* ─── Processing Spinner ─── */
-    .processing-overlay {
-      display: none;
-      align-items: center;
-      gap: 10px;
-      color: var(--accent);
-      font-size: 0.9rem;
-      font-weight: 500;
-    }
-    .processing-overlay.show { display: flex; }
-    .spinner {
-      width: 18px; height: 18px;
-      border: 2px solid transparent;
-      border-top-color: var(--accent);
-      border-radius: 50%;
-      animation: spin 0.7s linear infinite;
-    }
-    @keyframes spin { to { transform: rotate(360deg); } }
-
     /* ─── History ─── */
     .history-list {
       display: flex;
       flex-direction: column;
       gap: 8px;
-      max-height: 200px;
+      max-height: 220px;
       overflow-y: auto;
+    }
+    .history-list::-webkit-scrollbar { width: 5px; }
+    .history-list::-webkit-scrollbar-track { background: transparent; }
+    .history-list::-webkit-scrollbar-thumb {
+      background: var(--border);
+      border-radius: 10px;
     }
     .history-item {
       background: var(--bg-input);
@@ -340,6 +389,11 @@
       justify-content: space-between;
       align-items: flex-start;
       gap: 10px;
+      animation: slideIn 0.2s ease;
+    }
+    @keyframes slideIn {
+      from { opacity: 0; transform: translateY(-6px); }
+      to   { opacity: 1; transform: translateY(0); }
     }
     .history-text {
       font-family: 'Noto Sans Devanagari', serif;
@@ -352,12 +406,29 @@
       font-size: 0.72rem;
       color: var(--text-muted);
       white-space: nowrap;
+      margin-top: 2px;
     }
     .history-empty {
       text-align: center;
       color: var(--text-muted);
       font-size: 0.85rem;
-      padding: 16px;
+      padding: 20px;
+    }
+
+    /* ─── Keyboard Hint ─── */
+    .kb-hint {
+      text-align: center;
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      margin-top: -8px;
+    }
+    .kb-hint kbd {
+      background: var(--bg-input);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 1px 6px;
+      font-size: 0.75rem;
+      font-family: monospace;
     }
 
     /* ─── Toast ─── */
@@ -376,34 +447,44 @@
       transition: transform 0.3s ease;
       z-index: 999;
       white-space: nowrap;
+      max-width: 90vw;
+      text-align: center;
     }
     #toast.show { transform: translateX(-50%) translateY(0); }
 
     /* ─── Responsive ─── */
     @media (max-width: 500px) {
-      .url-row { flex-direction: column; }
-      .url-input { min-width: 100%; }
-      .btn-connect { width: 100%; }
+      .url-row       { flex-direction: column; }
+      .url-input     { min-width: 100%; }
+      .btn-connect   { width: 100%; }
+      .settings-row  { gap: 12px; }
+      .vad-stats-row { flex-direction: column; align-items: flex-start; }
     }
   </style>
-  <!-- Google Font for Devanagari -->
-  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Devanagari:wght@400;700&display=swap" rel="stylesheet"/>
+  <link
+    href="https://fonts.googleapis.com/css2?family=Noto+Sans+Devanagari:wght@400;700&display=swap"
+    rel="stylesheet"
+  />
 </head>
 <body>
 
-<!-- ─── HEADER ─── -->
+<!-- ═══════════════════════════════════════════
+     HEADER
+════════════════════════════════════════════ -->
 <header>
   <h1>🎙️ देवनागरी ASR</h1>
-  <p>Live Phonetic Transcription — English → Devanagari</p>
+  <p>Live Phonetic Transcription — English &amp; Nepali → Devanagari</p>
   <span class="devanagari-badge">Whisper Large-v3 · Nepali Script</span>
 </header>
 
-<!-- ─── MAIN ─── -->
+<!-- ═══════════════════════════════════════════
+     MAIN CONTAINER
+════════════════════════════════════════════ -->
 <div class="container">
 
-  <!-- ─── Card 1: Backend Connection ─── -->
+  <!-- ── CARD 1: Backend Connection ── -->
   <div class="card">
-    <div class="card-title">🔗 Backend Connection (Ngrok URL)</div>
+    <div class="card-title">🔗 Backend Connection (Ngrok URL from Colab)</div>
     <div class="url-row">
       <input
         id="ngrok-url"
@@ -413,30 +494,61 @@
         autocomplete="off"
         spellcheck="false"
       />
-      <button class="btn-connect" onclick="testConnection()">Test Connection</button>
+      <button class="btn-connect" onclick="testConnection()">
+        Test Connection
+      </button>
     </div>
-    <div class="status-bar" style="margin-top:12px;">
+    <div class="status-bar">
       <div class="status-dot" id="status-dot"></div>
-      <span class="status-text" id="status-text">Paste your Ngrok URL above and click Test Connection</span>
+      <span class="status-text" id="status-text">
+        Paste your Ngrok URL above and click Test Connection
+      </span>
     </div>
   </div>
 
-  <!-- ─── Card 2: Recording Controls ─── -->
+  <!-- ── CARD 2: Recording Controls ── -->
   <div class="card">
     <div class="card-title">🎤 Recording Controls</div>
+
+    <!-- Waveform Visualizer -->
     <canvas id="visualizer"></canvas>
 
-    <div class="controls" style="margin-top:20px;">
-      <button class="btn-record" id="btn-record" onclick="toggleRecording()" disabled>
+    <!-- VAD Indicator + Stats -->
+    <div class="vad-stats-row">
+      <span id="vad-indicator">🔇 Silence</span>
+      <span id="stats-box">Sent: 0 | ✅ OK: 0 | 🚫 Blocked: 0 | 🔇 Silent: 0</span>
+    </div>
+
+    <!-- Controls -->
+    <div class="controls">
+
+      <!-- Record Button -->
+      <button
+        class="btn-record"
+        id="btn-record"
+        onclick="toggleRecording()"
+        disabled
+        title="Click or press Space to toggle recording"
+      >
         🎙️
       </button>
-      <span class="btn-label" id="rec-label">Connect backend to enable recording</span>
+      <span class="btn-label" id="rec-label">
+        Connect backend to enable recording
+      </span>
 
+      <!-- Settings -->
       <div class="settings-row">
         <div class="setting-group">
-          <label for="chunk-dur">Chunk: </label>
-          <input type="range" id="chunk-dur" min="2" max="15" value="5" step="1"
-                 oninput="document.getElementById('chunk-val').textContent=this.value+'s'"/>
+          <label for="chunk-dur">Chunk:</label>
+          <input
+            type="range"
+            id="chunk-dur"
+            min="2"
+            max="15"
+            value="5"
+            step="1"
+            oninput="document.getElementById('chunk-val').textContent = this.value + 's'"
+          />
           <span class="setting-val" id="chunk-val">5s</span>
         </div>
         <div class="setting-group">
@@ -445,14 +557,22 @@
         </div>
       </div>
 
+      <!-- Processing Spinner -->
       <div class="processing-overlay" id="processing-overlay">
         <div class="spinner"></div>
-        <span>Transcribing...</span>
+        <span>Transcribing with Whisper...</span>
       </div>
-    </div>
-  </div>
 
-  <!-- ─── Card 3: Live Transcript ─── -->
+    </div><!-- end .controls -->
+
+    <!-- Keyboard shortcut hint -->
+    <p class="kb-hint" style="margin-top:16px;">
+      Press <kbd>Space</kbd> to toggle recording
+    </p>
+
+  </div><!-- end card 2 -->
+
+  <!-- ── CARD 3: Live Transcript ── -->
   <div class="card">
     <div class="card-title">📝 Devanagari Transcript</div>
     <div class="transcript-wrapper">
@@ -471,7 +591,7 @@
     </div>
   </div>
 
-  <!-- ─── Card 4: Segment History ─── -->
+  <!-- ── CARD 4: Segment History ── -->
   <div class="card">
     <div class="card-title">🕐 Segment History</div>
     <div class="history-list" id="history-list">
@@ -481,9 +601,11 @@
 
 </div><!-- end .container -->
 
-<!-- Toast -->
+<!-- Toast Notification -->
 <div id="toast"></div>
 
+<!-- Load app logic -->
 <script src="app.js"></script>
+
 </body>
 </html>

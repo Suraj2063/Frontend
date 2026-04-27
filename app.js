@@ -1,9 +1,5 @@
 // ============================================================
-//  app.js — Fixed Version
-//  Key fixes:
-//  1. Adds "ngrok-skip-browser-warning" header to all requests
-//  2. Adds explicit mode/credentials settings to fetch
-//  3. Better error messages so you know EXACTLY what failed
+//  app.js — Relaxed Hallucination Detection
 // ============================================================
 
 "use strict";
@@ -18,12 +14,10 @@ const STATE = {
   audioChunks:   [],
   chunkTimer:    null,
   animFrame:     null,
-  segmentCount:  0,
+  hasVoiceActivity: false,
+  silenceCounter:   0,
 };
 
-// ─────────────────────────────────────────────
-// DOM HELPERS
-// ─────────────────────────────────────────────
 const $ = (id) => document.getElementById(id);
 
 const DOM = {
@@ -39,6 +33,8 @@ const DOM = {
   chunkDur:      () => $("chunk-dur"),
   continuous:    () => $("continuous-mode"),
   toast:         () => $("toast"),
+  vadIndicator:  () => $("vad-indicator"),
+  statsBox:      () => $("stats-box"),
 };
 
 // ─────────────────────────────────────────────
@@ -56,10 +52,9 @@ function showToast(msg, ms = 4000) {
 // STATUS
 // ─────────────────────────────────────────────
 function setStatus(state, text) {
-  const dot  = DOM.statusDot();
-  const span = DOM.statusText();
-  dot.className    = "status-dot";
-  span.textContent = text;
+  const dot = DOM.statusDot();
+  dot.className = "status-dot";
+  DOM.statusText().textContent = text;
   dot.style.background = "";
   if (state === "connected")  dot.classList.add("connected");
   if (state === "recording")  dot.classList.add("recording");
@@ -68,156 +63,152 @@ function setStatus(state, text) {
 }
 
 // ─────────────────────────────────────────────
-// ★ FIXED: makeFetchHeaders
-//   Always include ngrok-skip-browser-warning.
-//   Without this, Ngrok returns an HTML warning
-//   page instead of JSON → "Failed to fetch"
+// STATS
 // ─────────────────────────────────────────────
-function makeFetchHeaders(extra = {}) {
+const STATS = { sent: 0, ok: 0, blocked: 0, silent: 0 };
+
+function updateStats(key) {
+  STATS[key]++;
+  const el = DOM.statsBox();
+  if (el) {
+    el.textContent =
+      `Sent: ${STATS.sent} | ✅ OK: ${STATS.ok} | ` +
+      `🚫 Blocked: ${STATS.blocked} | 🔇 Silent: ${STATS.silent}`;
+  }
+}
+
+// ─────────────────────────────────────────────
+// FETCH HEADERS
+// ─────────────────────────────────────────────
+function headers(extra = {}) {
   return {
-    "ngrok-skip-browser-warning": "true",   // ← THE FIX
+    "ngrok-skip-browser-warning": "true",
     "Accept": "application/json",
-    ...extra,
+    ...extra
   };
 }
 
 // ─────────────────────────────────────────────
-// TEST CONNECTION — Improved error reporting
+// ★ RELAXED CLIENT-SIDE HALLUCINATION FILTER
+// Only blocks severe repetition (6+ same word)
+// ─────────────────────────────────────────────
+function isClientSideHallucination(text) {
+  if (!text || text.trim().length < 2) return true;
+
+  const words = text.trim().split(/[\s,।]+/).filter(Boolean);
+
+  // Only block if same word repeats 6+ times
+  const counts = {};
+  for (const w of words) {
+    counts[w] = (counts[w] || 0) + 1;
+    if (counts[w] >= 6) {
+      console.warn(`Client blocked: "${w}" repeated ${counts[w]}x`);
+      return true;
+    }
+  }
+
+  // Only block if literally 1 character
+  if (words.length === 1 && words[0].length < 2) return true;
+
+  return false;
+}
+
+// ─────────────────────────────────────────────
+// CONNECTION TEST
 // ─────────────────────────────────────────────
 async function testConnection() {
-  let raw = DOM.ngrokUrl().value.trim();
-
-  // ── Input validation ──
-  if (!raw) {
-    showToast("⚠️ Please paste your Ngrok URL first");
+  let url = DOM.ngrokUrl().value.trim().replace(/\/+$/, "");
+  if (!url) {
+    showToast("⚠️ Paste your Ngrok URL first");
     return;
   }
+  if (!url.startsWith("http")) url = "https://" + url;
+  DOM.ngrokUrl().value = url;
+  STATE.backendUrl = url;
 
-  // Strip trailing slash
-  raw = raw.replace(/\/+$/, "");
+  setStatus("processing", "Connecting...");
 
-  // Auto-fix: add https:// if missing
-  if (!raw.startsWith("http")) {
-    raw = "https://" + raw;
-    DOM.ngrokUrl().value = raw;
-  }
-
-  STATE.backendUrl = raw;
-  setStatus("processing", "Testing connection...");
-
-  // ── Attempt 1: /health endpoint ──
   try {
-    console.log(`Testing: ${raw}/health`);
-
-    const res = await fetch(`${raw}/health`, {
+    const res = await fetch(`${url}/health`, {
       method:  "GET",
-      mode:    "cors",                         // explicit CORS mode
-      headers: makeFetchHeaders(),             // ngrok bypass header
-      signal:  AbortSignal.timeout(10000),     // 10s timeout
+      mode:    "cors",
+      headers: headers(),
+      signal:  AbortSignal.timeout(10000),
     });
-
-    console.log("Response status:", res.status);
-    console.log("Response headers:", [...res.headers.entries()]);
-
-    // Check content type before parsing JSON
-    const contentType = res.headers.get("content-type") || "";
-    if (!contentType.includes("application/json")) {
-      const text = await res.text();
-      console.error("Non-JSON response:", text.substring(0, 300));
-      throw new Error(
-        `Got HTML instead of JSON. ` +
-        `This usually means Ngrok showed its warning page. ` +
-        `Make sure the backend is running in Colab.`
-      );
+    const ct = res.headers.get("content-type") || "";
+    if (!ct.includes("application/json")) {
+      throw new Error("Got HTML — Colab not running?");
     }
-
     const data = await res.json();
-    console.log("Health response:", data);
-
-    if (res.ok && data.status === "ok") {
-      STATE.isConnected = true;
-      setStatus(
-        "connected",
-        `✅ Connected | GPU: ${data.gpu ? "🟢 Yes" : "🔴 No (CPU)"} | Device: ${data.device}`
-      );
-      DOM.btnRecord().disabled = false;
-      DOM.recLabel().textContent = "Press 🎙️ to start recording";
-      showToast("✅ Backend connected! Ready to transcribe.");
-    } else {
-      throw new Error(`Unexpected response: ${JSON.stringify(data)}`);
-    }
-
+    STATE.isConnected = true;
+    setStatus("connected", `✅ Connected | GPU: ${data.gpu ? "🟢" : "🔴"} | Port: ${data.port}`);
+    DOM.btnRecord().disabled = false;
+    DOM.recLabel().textContent = "Press 🎙️ to start";
+    showToast("✅ Connected!");
   } catch (err) {
     STATE.isConnected = false;
-    DOM.btnRecord().disabled = true;
-
-    // ── Detailed error diagnosis ──
-    let diagnosis = "";
-    const msg = err.message || "";
-
-    if (msg.includes("Failed to fetch") || msg.includes("NetworkError")) {
-      diagnosis =
-        "Network blocked. Possible causes:\n" +
-        "1. Colab cell stopped running → Re-run Cell 3\n" +
-        "2. Ngrok tunnel expired → Restart ngrok in Colab\n" +
-        "3. Wrong URL copied → Check Colab output for URL\n" +
-        "4. Ad-blocker blocking ngrok → Disable it";
-    } else if (msg.includes("HTML instead of JSON")) {
-      diagnosis = "Ngrok warning page intercepted. Colab might be idle.";
-    } else if (msg.includes("timeout") || msg.includes("AbortError")) {
-      diagnosis = "Request timed out. Is Colab still running?";
-    } else {
-      diagnosis = msg;
-    }
-
-    setStatus("error", `Connection failed: ${diagnosis.split("\n")[0]}`);
-    console.error("Connection error details:", diagnosis);
-    showToast(`❌ ${diagnosis.split("\n")[0]}`, 6000);
-
-    // Show detailed help in console
-    console.group("🔧 Troubleshooting Steps");
-    console.log(diagnosis);
-    console.groupEnd();
+    setStatus("error", "Failed: " + err.message.substring(0, 60));
+    showToast("❌ " + err.message);
   }
 }
 
-// Allow Enter key in URL field
 $("ngrok-url").addEventListener("keydown", (e) => {
   if (e.key === "Enter") testConnection();
 });
 
 // ─────────────────────────────────────────────
-// AUDIO VISUALIZER
+// VISUALIZER + VAD
 // ─────────────────────────────────────────────
-let _audioCtxForViz = null;
+let _vizAudioCtx   = null;
+let _vadAnalyser   = null;
+const VAD_THRESHOLD = 15;
 
 function startVisualizer(stream) {
-  const canvas   = DOM.visualizer();
-  const ctx      = canvas.getContext("2d");
-  _audioCtxForViz= new AudioContext();
-  const source   = _audioCtxForViz.createMediaStreamSource(stream);
-  const analyser = _audioCtxForViz.createAnalyser();
-  analyser.fftSize = 256;
-  source.connect(analyser);
+  const canvas  = DOM.visualizer();
+  const ctx     = canvas.getContext("2d");
+  _vizAudioCtx  = new AudioContext();
+  const source  = _vizAudioCtx.createMediaStreamSource(stream);
+  _vadAnalyser  = _vizAudioCtx.createAnalyser();
+  _vadAnalyser.fftSize = 256;
+  source.connect(_vadAnalyser);
 
-  const bufLen  = analyser.frequencyBinCount;
+  const bufLen  = _vadAnalyser.frequencyBinCount;
   const dataArr = new Uint8Array(bufLen);
 
   function draw() {
     STATE.animFrame = requestAnimationFrame(draw);
     canvas.width  = canvas.offsetWidth;
     canvas.height = canvas.offsetHeight;
-    analyser.getByteFrequencyData(dataArr);
+    _vadAnalyser.getByteFrequencyData(dataArr);
+
+    const rms = Math.sqrt(dataArr.reduce((s, v) => s + v * v, 0) / bufLen);
+    const vadEl = DOM.vadIndicator();
+    if (rms > VAD_THRESHOLD) {
+      STATE.hasVoiceActivity = true;
+      STATE.silenceCounter   = 0;
+      if (vadEl) {
+        vadEl.textContent = "🎙️ Voice";
+        vadEl.style.color = "#22c55e";
+      }
+    } else {
+      STATE.silenceCounter++;
+      if (STATE.silenceCounter > 10) {
+        STATE.hasVoiceActivity = false;
+        if (vadEl) {
+          vadEl.textContent = "🔇 Silence";
+          vadEl.style.color = "#8b949e";
+        }
+      }
+    }
 
     ctx.fillStyle = "#21262d";
     ctx.fillRect(0, 0, canvas.width, canvas.height);
-
     const barW = (canvas.width / bufLen) * 2.5;
     let x = 0;
     for (let i = 0; i < bufLen; i++) {
-      const h   = (dataArr[i] / 255) * canvas.height;
-      const pct = dataArr[i] / 255;
-      ctx.fillStyle = `rgb(${Math.round(249*pct+59*(1-pct))},${Math.round(115*pct+130*(1-pct))},${Math.round(22*pct+246*(1-pct))})`;
+      const h = (dataArr[i] / 255) * canvas.height;
+      const p = dataArr[i] / 255;
+      ctx.fillStyle = `rgb(${Math.round(249*p+59*(1-p))},${Math.round(115*p+130*(1-p))},22)`;
       ctx.fillRect(x, canvas.height - h, barW - 1, h);
       x += barW;
     }
@@ -230,9 +221,9 @@ function stopVisualizer() {
     cancelAnimationFrame(STATE.animFrame);
     STATE.animFrame = null;
   }
-  if (_audioCtxForViz) {
-    _audioCtxForViz.close();
-    _audioCtxForViz = null;
+  if (_vizAudioCtx) {
+    _vizAudioCtx.close();
+    _vizAudioCtx = null;
   }
   const canvas = DOM.visualizer();
   const ctx    = canvas.getContext("2d");
@@ -244,138 +235,131 @@ function stopVisualizer() {
 // WAV ENCODER
 // ─────────────────────────────────────────────
 async function blobToWav(blob) {
-  const arrayBuffer = await blob.arrayBuffer();
-
-  // Decode with a temporary AudioContext
-  const tempCtx = new AudioContext();
+  const buf     = await blob.arrayBuffer();
+  const tmpCtx  = new AudioContext();
   let decoded;
-  try {
-    decoded = await tempCtx.decodeAudioData(arrayBuffer);
-  } finally {
-    tempCtx.close();
-  }
+  try   { decoded = await tmpCtx.decodeAudioData(buf); }
+  finally { tmpCtx.close(); }
 
-  // Resample to 16kHz mono (Whisper's native format)
-  const targetRate  = 16000;
-  const numSamples  = Math.ceil(decoded.duration * targetRate);
-  const offlineCtx  = new OfflineAudioContext(1, numSamples, targetRate);
-  const src         = offlineCtx.createBufferSource();
-  src.buffer        = decoded;
-  src.connect(offlineCtx.destination);
+  const rate    = 16000;
+  const samples = Math.ceil(decoded.duration * rate);
+  const offCtx  = new OfflineAudioContext(1, samples, rate);
+  const src     = offCtx.createBufferSource();
+  src.buffer    = decoded;
+  src.connect(offCtx.destination);
   src.start(0);
 
-  const resampled = await offlineCtx.startRendering();
-  return pcmToWavBlob(resampled);
+  const rendered = await offCtx.startRendering();
+  return encodeWav(rendered);
 }
 
-function pcmToWavBlob(audioBuffer) {
-  const sr      = audioBuffer.sampleRate;
-  const samples = float32ToInt16(audioBuffer.getChannelData(0));
-  const buf     = new ArrayBuffer(44 + samples.byteLength);
-  const view    = new DataView(buf);
-  const ws      = (off, str) => [...str].forEach((c, i) => view.setUint8(off + i, c.charCodeAt(0)));
-
-  ws(0, "RIFF");
-  view.setUint32(4,  36 + samples.byteLength, true);
-  ws(8, "WAVE");
-  ws(12, "fmt ");
-  view.setUint32(16, 16,       true);
-  view.setUint16(20, 1,        true);  // PCM
-  view.setUint16(22, 1,        true);  // mono
-  view.setUint32(24, sr,       true);
-  view.setUint32(28, sr * 2,   true);  // byte rate
-  view.setUint16(32, 2,        true);  // block align
-  view.setUint16(34, 16,       true);  // bits per sample
-  ws(36, "data");
-  view.setUint32(40, samples.byteLength, true);
-  new Uint8Array(buf, 44).set(new Uint8Array(samples.buffer));
-
+function encodeWav(ab) {
+  const sr  = ab.sampleRate;
+  const pcm = f32ToI16(ab.getChannelData(0));
+  const buf = new ArrayBuffer(44 + pcm.byteLength);
+  const v   = new DataView(buf);
+  const ws  = (o, s) => [...s].forEach((c, i) => v.setUint8(o + i, c.charCodeAt(0)));
+  ws(0, "RIFF"); v.setUint32(4, 36 + pcm.byteLength, true);
+  ws(8, "WAVE"); ws(12, "fmt ");
+  v.setUint32(16, 16, true); v.setUint16(20, 1, true);
+  v.setUint16(22, 1, true);  v.setUint32(24, sr, true);
+  v.setUint32(28, sr * 2, true); v.setUint16(32, 2, true);
+  v.setUint16(34, 16, true); ws(36, "data");
+  v.setUint32(40, pcm.byteLength, true);
+  new Uint8Array(buf, 44).set(new Uint8Array(pcm.buffer));
   return new Blob([buf], { type: "audio/wav" });
 }
 
-function float32ToInt16(f32) {
-  const out = new Int16Array(f32.length);
-  for (let i = 0; i < f32.length; i++) {
-    const s = Math.max(-1, Math.min(1, f32[i]));
-    out[i]  = s < 0 ? s * 0x8000 : s * 0x7fff;
+function f32ToI16(f) {
+  const o = new Int16Array(f.length);
+  for (let i = 0; i < f.length; i++) {
+    const s = Math.max(-1, Math.min(1, f[i]));
+    o[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
   }
-  return out;
+  return o;
 }
 
 // ─────────────────────────────────────────────
-// ★ FIXED: sendForTranscription
-//   - Adds ngrok-skip-browser-warning to POST request
-//   - Uses mode: "cors" explicitly
-//   - Better error messages
+// SEND FOR TRANSCRIPTION
 // ─────────────────────────────────────────────
-async function sendForTranscription(wavBlob) {
-  if (!STATE.isConnected || !wavBlob) return;
+async function sendForTranscription(wavBlob, hadVoice) {
+  if (!STATE.isConnected) return;
 
+  if (!hadVoice) {
+    console.log("🔇 Silent chunk skipped");
+    updateStats("silent");
+    return;
+  }
+
+  updateStats("sent");
   STATE.isProcessing = true;
   DOM.processing().classList.add("show");
-  setStatus("processing", "Sending audio to Whisper...");
 
-  const formData = new FormData();
-  formData.append("audio", wavBlob, "recording.wav");
+  const form = new FormData();
+  form.append("audio", wavBlob, "recording.wav");
 
   try {
-    console.log(`Sending ${wavBlob.size} bytes to ${STATE.backendUrl}/transcribe`);
-
     const res = await fetch(`${STATE.backendUrl}/transcribe`, {
       method:  "POST",
       mode:    "cors",
-      headers: makeFetchHeaders(),    // ← ngrok bypass header (no Content-Type for FormData)
-      body:    formData,
-      signal:  AbortSignal.timeout(90000),   // 90 seconds for large-v3
+      headers: headers(),
+      body:    form,
+      signal:  AbortSignal.timeout(90000),
     });
 
-    // Check for HTML response (Ngrok warning page)
-    const contentType = res.headers.get("content-type") || "";
-    if (!contentType.includes("application/json")) {
-      const text = await res.text();
-      console.error("Non-JSON transcribe response:", text.substring(0, 200));
-      throw new Error("Got HTML instead of JSON — Colab may have timed out");
-    }
-
-    if (!res.ok) {
-      const errBody = await res.json().catch(() => ({ detail: `HTTP ${res.status}` }));
-      throw new Error(errBody.detail || `HTTP ${res.status}`);
+    const ct = res.headers.get("content-type") || "";
+    if (!ct.includes("application/json")) {
+      throw new Error("Got HTML — Colab disconnected");
     }
 
     const data = await res.json();
-    console.log("Transcription result:", data);
+    console.log("Response:", data);
 
     if (data.success && data.transcript) {
-      appendTranscript(data.transcript);
-      addToHistory(data.transcript);
+      const text = data.transcript.trim();
+
+      if (isClientSideHallucination(text)) {
+        console.warn("🚫 Client blocked:", text);
+        updateStats("blocked");
+        showToast("🚫 Filtered repetition");
+        return;
+      }
+
+      updateStats("ok");
+      appendTranscript(text);
+      addToHistory(text);
+
     } else {
-      console.warn("Empty transcript returned:", data);
-      showToast("⚠️ No speech detected in this chunk");
+      const reason = data.reason || "unknown";
+      console.log(`Backend rejected: ${reason}`);
+      updateStats(reason.includes("hallucination") ? "blocked" : "silent");
+
+      if (reason.includes("hallucination")) {
+        showToast(`🚫 Filtered: ${reason}`);
+      }
     }
 
   } catch (err) {
-    console.error("Transcription error:", err);
-
-    if (err.name === "AbortError" || err.message.includes("timeout")) {
-      showToast("⏱️ Request timed out — model may be loading, try again");
+    console.error("Fetch error:", err);
+    if (err.name === "AbortError") {
+      showToast("⏱️ Timeout");
     } else if (err.message.includes("Failed to fetch")) {
-      showToast("❌ Lost connection to backend — check Colab is still running");
+      showToast("❌ Connection lost");
       STATE.isConnected = false;
-      setStatus("error", "Connection lost — paste URL and reconnect");
+      setStatus("error", "Connection lost");
     } else {
-      showToast(`❌ ${err.message}`);
+      showToast("❌ " + err.message.substring(0, 60));
     }
-
   } finally {
     STATE.isProcessing = false;
     DOM.processing().classList.remove("show");
     if (STATE.isRecording) setStatus("recording", "Recording...");
-    else if (STATE.isConnected) setStatus("connected", "Connected ✅ | Idle");
+    else if (STATE.isConnected) setStatus("connected", "Connected ✅");
   }
 }
 
 // ─────────────────────────────────────────────
-// TRANSCRIPT HELPERS
+// TRANSCRIPT
 // ─────────────────────────────────────────────
 function appendTranscript(text) {
   const box = DOM.transcriptBox();
@@ -384,31 +368,26 @@ function appendTranscript(text) {
   box.textContent = cur ? cur + " " + text : text;
   box.scrollTop = box.scrollHeight;
 }
-
 function clearTranscript() {
-  const box = DOM.transcriptBox();
-  box.textContent = "";
-  box.classList.add("empty");
+  const b = DOM.transcriptBox();
+  b.textContent = "";
+  b.classList.add("empty");
   showToast("🗑️ Cleared");
 }
-
 function copyTranscript() {
-  const text = DOM.transcriptBox().textContent.trim();
-  if (!text) { showToast("Nothing to copy"); return; }
-  navigator.clipboard.writeText(text)
-    .then(() => showToast("📋 Copied!"))
-    .catch(() => showToast("❌ Copy failed"));
+  const t = DOM.transcriptBox().textContent.trim();
+  if (!t) { showToast("Nothing to copy"); return; }
+  navigator.clipboard.writeText(t).then(() => showToast("📋 Copied!"));
 }
-
 function downloadTranscript() {
-  const text = DOM.transcriptBox().textContent.trim();
-  if (!text) { showToast("Nothing to download"); return; }
+  const t = DOM.transcriptBox().textContent.trim();
+  if (!t) { showToast("Nothing"); return; }
   const a = Object.assign(document.createElement("a"), {
-    href:     URL.createObjectURL(new Blob([text], { type: "text/plain;charset=utf-8" })),
-    download: `devanagari_${Date.now()}.txt`,
+    href: URL.createObjectURL(new Blob([t], { type: "text/plain;charset=utf-8" })),
+    download: `transcript_${Date.now()}.txt`,
   });
   a.click();
-  showToast("⬇️ Downloaded!");
+  showToast("⬇️ Downloaded");
 }
 
 // ─────────────────────────────────────────────
@@ -418,20 +397,16 @@ function addToHistory(text) {
   const list  = DOM.historyList();
   const empty = list.querySelector(".history-empty");
   if (empty) empty.remove();
-
-  const time = new Date().toLocaleTimeString();
   const item = document.createElement("div");
   item.className = "history-item";
-  item.innerHTML = `
-    <span class="history-text">${escapeHtml(text)}</span>
-    <span class="history-time">${time}</span>`;
+  item.innerHTML =
+    `<span class="history-text">${escHtml(text)}</span>
+     <span class="history-time">${new Date().toLocaleTimeString()}</span>`;
   list.insertBefore(item, list.firstChild);
-
-  const items = list.querySelectorAll(".history-item");
-  if (items.length > 20) items[items.length - 1].remove();
+  const all = list.querySelectorAll(".history-item");
+  if (all.length > 20) all[all.length - 1].remove();
 }
-
-function escapeHtml(s) {
+function escHtml(s) {
   const d = document.createElement("div");
   d.textContent = s;
   return d.innerHTML;
@@ -442,179 +417,120 @@ function escapeHtml(s) {
 // ─────────────────────────────────────────────
 async function startRecording() {
   if (!STATE.isConnected) {
-    showToast("⚠️ Connect to backend first");
+    showToast("⚠️ Connect first");
     return;
   }
 
   try {
     STATE.mediaStream = await navigator.mediaDevices.getUserMedia({
-      audio: {
-        channelCount:     1,
-        sampleRate:       16000,
-        echoCancellation: true,
-        noiseSuppression: true,
-        autoGainControl:  true,
-      },
+      audio: { channelCount: 1, sampleRate: 16000,
+               echoCancellation: true, noiseSuppression: true, autoGainControl: true },
     });
-  } catch (err) {
-    showToast("❌ Microphone access denied — allow it in browser settings");
-    setStatus("error", "Microphone permission denied");
+  } catch {
+    showToast("❌ Mic access denied");
     return;
   }
 
   startVisualizer(STATE.mediaStream);
 
-  // Best available MIME type
-  const mimes = [
-    "audio/webm;codecs=opus",
-    "audio/webm",
-    "audio/ogg;codecs=opus",
-    "audio/ogg",
-    "audio/mp4",
-  ];
-  const mimeType = mimes.find((m) => MediaRecorder.isTypeSupported(m)) || "";
-  console.log("Using MIME type:", mimeType || "(browser default)");
+  const mimes  = ["audio/webm;codecs=opus","audio/webm","audio/ogg;codecs=opus","audio/ogg"];
+  const mime   = mimes.find(m => MediaRecorder.isTypeSupported(m)) || "";
+  STATE.isRecording   = true;
+  STATE.audioChunks   = [];
+  STATE.hasVoiceActivity = false;
 
-  STATE.isRecording = true;
-  STATE.audioChunks = [];
-
-  // Update UI
   DOM.btnRecord().textContent = "⏹️";
   DOM.btnRecord().classList.add("recording");
-  DOM.recLabel().textContent = "Recording... (click ⏹️ or press Space to stop)";
+  DOM.recLabel().textContent = "Recording... (Space or click to stop)";
   setStatus("recording", "Recording...");
 
-  // ── Chunk-based recording loop ──
   function startChunk() {
     if (!STATE.isRecording) return;
     STATE.audioChunks = [];
+    let chunkHadVoice = false;
 
     try {
-      STATE.mediaRecorder = new MediaRecorder(
-        STATE.mediaStream,
-        mimeType ? { mimeType } : {}
-      );
-    } catch (e) {
+      STATE.mediaRecorder = new MediaRecorder(STATE.mediaStream, mime ? { mimeType: mime } : {});
+    } catch {
       STATE.mediaRecorder = new MediaRecorder(STATE.mediaStream);
     }
 
     STATE.mediaRecorder.ondataavailable = (e) => {
-      if (e.data && e.data.size > 0) STATE.audioChunks.push(e.data);
+      if (e.data?.size > 0) {
+        STATE.audioChunks.push(e.data);
+        if (STATE.hasVoiceActivity) chunkHadVoice = true;
+      }
     };
 
+    STATE.mediaRecorder.start(200);
+
     STATE.mediaRecorder.onstop = async () => {
-      const raw = new Blob(STATE.audioChunks, {
-        type: mimeType || "audio/webm",
-      });
+      const raw = new Blob(STATE.audioChunks, { type: mime || "audio/webm" });
+      console.log(`Chunk: ${raw.size}B | voice: ${chunkHadVoice}`);
 
-      console.log(`Chunk: ${raw.size} bytes`);
-
-      if (raw.size < 1000) {
-        console.log("Chunk too small, skipping");
+      if (raw.size < 2000) {
         if (STATE.isRecording) startChunk();
         return;
       }
 
-      // Convert to WAV and send
       try {
         const wav = await blobToWav(raw);
-        console.log(`WAV: ${wav.size} bytes`);
-        // Fire-and-forget so next chunk starts immediately
-        sendForTranscription(wav);
-      } catch (convErr) {
-        console.error("WAV conversion failed, sending raw:", convErr);
-        sendForTranscription(raw);
+        sendForTranscription(wav, chunkHadVoice);
+      } catch (e) {
+        console.error("WAV error:", e);
+        sendForTranscription(raw, chunkHadVoice);
       }
 
       if (STATE.isRecording) startChunk();
     };
 
-    STATE.mediaRecorder.start();
-
-    // Stop chunk after N seconds
     const dur = parseInt(DOM.chunkDur().value, 10) * 1000;
     STATE.chunkTimer = setTimeout(() => {
-      if (STATE.mediaRecorder?.state === "recording") {
+      if (STATE.mediaRecorder?.state === "recording")
         STATE.mediaRecorder.stop();
-      }
     }, dur);
   }
 
-  // Non-continuous: record until user clicks stop
-  if (!DOM.continuous().checked) {
-    try {
-      STATE.mediaRecorder = new MediaRecorder(
-        STATE.mediaStream,
-        mimeType ? { mimeType } : {}
-      );
-    } catch (e) {
-      STATE.mediaRecorder = new MediaRecorder(STATE.mediaStream);
-    }
-    STATE.mediaRecorder.ondataavailable = (e) => {
-      if (e.data?.size > 0) STATE.audioChunks.push(e.data);
-    };
-    STATE.mediaRecorder.onstop = async () => {
-      const raw = new Blob(STATE.audioChunks, { type: mimeType || "audio/webm" });
-      try { await sendForTranscription(await blobToWav(raw)); }
-      catch { await sendForTranscription(raw); }
-    };
-    STATE.mediaRecorder.start();
-  } else {
-    startChunk();
-  }
+  startChunk();
 }
 
 function stopRecording() {
   STATE.isRecording = false;
-
   clearTimeout(STATE.chunkTimer);
-  STATE.chunkTimer = null;
-
-  if (STATE.mediaRecorder?.state !== "inactive") {
-    STATE.mediaRecorder.stop();
-  }
-
-  STATE.mediaStream?.getTracks().forEach((t) => t.stop());
+  if (STATE.mediaRecorder?.state !== "inactive") STATE.mediaRecorder.stop();
+  STATE.mediaStream?.getTracks().forEach(t => t.stop());
   STATE.mediaStream = null;
-
   stopVisualizer();
-
   DOM.btnRecord().textContent = "🎙️";
   DOM.btnRecord().classList.remove("recording");
-  DOM.recLabel().textContent = "Press to start recording";
-  setStatus("connected", "Connected ✅ | Idle");
-  showToast("⏹️ Recording stopped");
+  DOM.recLabel().textContent = "Press to start";
+  setStatus("connected", "Connected ✅");
+  showToast("⏹️ Stopped");
 }
 
 function toggleRecording() {
-  if (!STATE.isConnected) {
-    showToast("⚠️ Connect to backend first");
-    return;
-  }
+  if (!STATE.isConnected) { showToast("⚠️ Connect first"); return; }
   STATE.isRecording ? stopRecording() : startRecording();
 }
 
-// Space bar shortcut
 document.addEventListener("keydown", (e) => {
-  const active = document.activeElement;
-  if (active === DOM.ngrokUrl() || active === DOM.transcriptBox()) return;
+  const a = document.activeElement;
+  if (a === DOM.ngrokUrl() || a === DOM.transcriptBox()) return;
   if (e.code === "Space" && !e.repeat) {
     e.preventDefault();
     if (STATE.isConnected) toggleRecording();
   }
 });
 
-// Track empty state on transcript box
 DOM.transcriptBox().addEventListener("input", function () {
   this.classList.toggle("empty", !this.textContent.trim());
 });
 
-// Init visualizer blank canvas
 window.addEventListener("load", () => {
   const c = DOM.visualizer();
   c.width = c.offsetWidth; c.height = c.offsetHeight;
   const ctx = c.getContext("2d");
   ctx.fillStyle = "#21262d";
   ctx.fillRect(0, 0, c.width, c.height);
-  console.log("✅ Devanagari ASR ready");
+  console.log("✅ Frontend ready");
 });
