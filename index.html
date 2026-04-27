@@ -1,0 +1,489 @@
+<!DOCTYPE html>
+<html lang="ne">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>देवनागरी ASR - Devanagari Live Transcription</title>
+  <style>
+    /* ─── Reset & Base ─── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg-dark:      #0d1117;
+      --bg-card:      #161b22;
+      --bg-input:     #21262d;
+      --border:       #30363d;
+      --accent:       #f97316;
+      --accent-hover: #ea6c0a;
+      --accent-stop:  #ef4444;
+      --accent-stop-h:#dc2626;
+      --text-primary: #e6edf3;
+      --text-muted:   #8b949e;
+      --text-deva:    #fbbf24;
+      --green:        #22c55e;
+      --red:          #ef4444;
+      --blue:         #3b82f6;
+      --radius:       12px;
+      --shadow:       0 4px 24px rgba(0,0,0,0.4);
+    }
+
+    body {
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      background: var(--bg-dark);
+      color: var(--text-primary);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 24px 16px 48px;
+    }
+
+    /* ─── Header ─── */
+    header {
+      text-align: center;
+      margin-bottom: 32px;
+    }
+    header h1 {
+      font-size: clamp(1.6rem, 4vw, 2.4rem);
+      font-weight: 700;
+      background: linear-gradient(135deg, var(--accent), var(--text-deva));
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      letter-spacing: -0.5px;
+    }
+    header p {
+      color: var(--text-muted);
+      margin-top: 6px;
+      font-size: 0.95rem;
+    }
+    .devanagari-badge {
+      display: inline-block;
+      background: linear-gradient(135deg, #f97316, #fbbf24);
+      color: #0d1117;
+      font-weight: 800;
+      font-size: 0.78rem;
+      padding: 3px 10px;
+      border-radius: 20px;
+      margin-top: 8px;
+      letter-spacing: 0.5px;
+    }
+
+    /* ─── Main Container ─── */
+    .container {
+      width: 100%;
+      max-width: 760px;
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+    }
+
+    /* ─── Card ─── */
+    .card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 24px;
+      box-shadow: var(--shadow);
+    }
+    .card-title {
+      font-size: 0.78rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      color: var(--text-muted);
+      margin-bottom: 12px;
+    }
+
+    /* ─── URL Input ─── */
+    .url-row {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    .url-input {
+      flex: 1;
+      min-width: 220px;
+      background: var(--bg-input);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      color: var(--text-primary);
+      font-size: 0.9rem;
+      padding: 10px 14px;
+      transition: border-color 0.2s;
+      outline: none;
+    }
+    .url-input:focus { border-color: var(--accent); }
+    .url-input::placeholder { color: var(--text-muted); }
+
+    .btn-connect {
+      background: var(--blue);
+      color: white;
+      border: none;
+      border-radius: 8px;
+      padding: 10px 20px;
+      font-size: 0.9rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.2s, transform 0.1s;
+      white-space: nowrap;
+    }
+    .btn-connect:hover { background: #2563eb; transform: translateY(-1px); }
+    .btn-connect:active { transform: translateY(0); }
+
+    /* ─── Status Indicator ─── */
+    .status-bar {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    .status-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: var(--text-muted);
+      flex-shrink: 0;
+      transition: background 0.3s;
+    }
+    .status-dot.connected  { background: var(--green); box-shadow: 0 0 8px var(--green); }
+    .status-dot.recording  {
+      background: var(--red);
+      box-shadow: 0 0 8px var(--red);
+      animation: pulse 1s infinite;
+    }
+    .status-dot.processing { background: var(--accent); box-shadow: 0 0 8px var(--accent); }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50%       { opacity: 0.5; transform: scale(0.85); }
+    }
+    .status-text {
+      font-size: 0.88rem;
+      color: var(--text-muted);
+    }
+
+    /* ─── Control Panel ─── */
+    .controls {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 20px;
+    }
+
+    /* ─── Record Button ─── */
+    .btn-record {
+      width: 100px;
+      height: 100px;
+      border-radius: 50%;
+      border: 3px solid var(--accent);
+      background: transparent;
+      color: var(--accent);
+      font-size: 2.4rem;
+      cursor: pointer;
+      transition: all 0.25s;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      position: relative;
+      outline: none;
+    }
+    .btn-record:hover:not(:disabled) {
+      background: rgba(249, 115, 22, 0.12);
+      transform: scale(1.06);
+    }
+    .btn-record.recording {
+      border-color: var(--accent-stop);
+      color: var(--accent-stop);
+      animation: ring-pulse 1.5s infinite;
+    }
+    @keyframes ring-pulse {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(239,68,68,0.4); }
+      50%       { box-shadow: 0 0 0 14px rgba(239,68,68,0); }
+    }
+    .btn-record:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+      transform: none;
+    }
+    .btn-label {
+      font-size: 0.85rem;
+      color: var(--text-muted);
+      text-align: center;
+    }
+
+    /* ─── Audio Visualizer ─── */
+    #visualizer {
+      width: 100%;
+      height: 60px;
+      border-radius: 8px;
+      background: var(--bg-input);
+      display: block;
+    }
+
+    /* ─── Settings Row ─── */
+    .settings-row {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+    .setting-group {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .setting-group label {
+      font-size: 0.83rem;
+      color: var(--text-muted);
+      white-space: nowrap;
+    }
+    .setting-group input[type="range"] {
+      accent-color: var(--accent);
+      cursor: pointer;
+    }
+    .setting-val {
+      font-size: 0.83rem;
+      color: var(--text-primary);
+      min-width: 30px;
+    }
+    .setting-group input[type="checkbox"] {
+      accent-color: var(--accent);
+      width: 15px; height: 15px;
+      cursor: pointer;
+    }
+
+    /* ─── Transcript Area ─── */
+    .transcript-wrapper {
+      position: relative;
+    }
+    .transcript-actions {
+      position: absolute;
+      top: 8px;
+      right: 8px;
+      display: flex;
+      gap: 6px;
+    }
+    .btn-sm {
+      background: var(--bg-input);
+      border: 1px solid var(--border);
+      color: var(--text-muted);
+      border-radius: 6px;
+      padding: 4px 10px;
+      font-size: 0.78rem;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .btn-sm:hover {
+      border-color: var(--accent);
+      color: var(--accent);
+    }
+
+    #transcript-box {
+      width: 100%;
+      min-height: 200px;
+      background: var(--bg-input);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 48px 16px 16px;
+      font-size: clamp(1.2rem, 3vw, 1.7rem);
+      line-height: 1.8;
+      color: var(--text-deva);
+      font-family: 'Noto Sans Devanagari', 'Mangal', 'Arial Unicode MS', serif;
+      resize: vertical;
+      outline: none;
+      transition: border-color 0.2s;
+      word-break: break-word;
+    }
+    #transcript-box:focus { border-color: var(--accent); }
+    #transcript-box.empty::before {
+      content: attr(data-placeholder);
+      color: var(--text-muted);
+      font-size: 1rem;
+      font-family: 'Segoe UI', sans-serif;
+      pointer-events: none;
+    }
+
+    /* ─── Processing Spinner ─── */
+    .processing-overlay {
+      display: none;
+      align-items: center;
+      gap: 10px;
+      color: var(--accent);
+      font-size: 0.9rem;
+      font-weight: 500;
+    }
+    .processing-overlay.show { display: flex; }
+    .spinner {
+      width: 18px; height: 18px;
+      border: 2px solid transparent;
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ─── History ─── */
+    .history-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      max-height: 200px;
+      overflow-y: auto;
+    }
+    .history-item {
+      background: var(--bg-input);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 10px 14px;
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 10px;
+    }
+    .history-text {
+      font-family: 'Noto Sans Devanagari', serif;
+      color: var(--text-deva);
+      font-size: 1rem;
+      line-height: 1.5;
+      flex: 1;
+    }
+    .history-time {
+      font-size: 0.72rem;
+      color: var(--text-muted);
+      white-space: nowrap;
+    }
+    .history-empty {
+      text-align: center;
+      color: var(--text-muted);
+      font-size: 0.85rem;
+      padding: 16px;
+    }
+
+    /* ─── Toast ─── */
+    #toast {
+      position: fixed;
+      bottom: 24px;
+      left: 50%;
+      transform: translateX(-50%) translateY(80px);
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      color: var(--text-primary);
+      padding: 12px 24px;
+      border-radius: 30px;
+      font-size: 0.88rem;
+      box-shadow: var(--shadow);
+      transition: transform 0.3s ease;
+      z-index: 999;
+      white-space: nowrap;
+    }
+    #toast.show { transform: translateX(-50%) translateY(0); }
+
+    /* ─── Responsive ─── */
+    @media (max-width: 500px) {
+      .url-row { flex-direction: column; }
+      .url-input { min-width: 100%; }
+      .btn-connect { width: 100%; }
+    }
+  </style>
+  <!-- Google Font for Devanagari -->
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Devanagari:wght@400;700&display=swap" rel="stylesheet"/>
+</head>
+<body>
+
+<!-- ─── HEADER ─── -->
+<header>
+  <h1>🎙️ देवनागरी ASR</h1>
+  <p>Live Phonetic Transcription — English → Devanagari</p>
+  <span class="devanagari-badge">Whisper Large-v3 · Nepali Script</span>
+</header>
+
+<!-- ─── MAIN ─── -->
+<div class="container">
+
+  <!-- ─── Card 1: Backend Connection ─── -->
+  <div class="card">
+    <div class="card-title">🔗 Backend Connection (Ngrok URL)</div>
+    <div class="url-row">
+      <input
+        id="ngrok-url"
+        class="url-input"
+        type="url"
+        placeholder="https://xxxx-xx-xx-xxx.ngrok-free.app"
+        autocomplete="off"
+        spellcheck="false"
+      />
+      <button class="btn-connect" onclick="testConnection()">Test Connection</button>
+    </div>
+    <div class="status-bar" style="margin-top:12px;">
+      <div class="status-dot" id="status-dot"></div>
+      <span class="status-text" id="status-text">Paste your Ngrok URL above and click Test Connection</span>
+    </div>
+  </div>
+
+  <!-- ─── Card 2: Recording Controls ─── -->
+  <div class="card">
+    <div class="card-title">🎤 Recording Controls</div>
+    <canvas id="visualizer"></canvas>
+
+    <div class="controls" style="margin-top:20px;">
+      <button class="btn-record" id="btn-record" onclick="toggleRecording()" disabled>
+        🎙️
+      </button>
+      <span class="btn-label" id="rec-label">Connect backend to enable recording</span>
+
+      <div class="settings-row">
+        <div class="setting-group">
+          <label for="chunk-dur">Chunk: </label>
+          <input type="range" id="chunk-dur" min="2" max="15" value="5" step="1"
+                 oninput="document.getElementById('chunk-val').textContent=this.value+'s'"/>
+          <span class="setting-val" id="chunk-val">5s</span>
+        </div>
+        <div class="setting-group">
+          <input type="checkbox" id="continuous-mode" checked />
+          <label for="continuous-mode">Continuous Mode</label>
+        </div>
+      </div>
+
+      <div class="processing-overlay" id="processing-overlay">
+        <div class="spinner"></div>
+        <span>Transcribing...</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ─── Card 3: Live Transcript ─── -->
+  <div class="card">
+    <div class="card-title">📝 Devanagari Transcript</div>
+    <div class="transcript-wrapper">
+      <div class="transcript-actions">
+        <button class="btn-sm" onclick="copyTranscript()">Copy</button>
+        <button class="btn-sm" onclick="clearTranscript()">Clear</button>
+        <button class="btn-sm" onclick="downloadTranscript()">Download</button>
+      </div>
+      <div
+        id="transcript-box"
+        class="empty"
+        contenteditable="true"
+        data-placeholder="Transcribed Devanagari text will appear here..."
+        spellcheck="false"
+      ></div>
+    </div>
+  </div>
+
+  <!-- ─── Card 4: Segment History ─── -->
+  <div class="card">
+    <div class="card-title">🕐 Segment History</div>
+    <div class="history-list" id="history-list">
+      <div class="history-empty">No segments yet. Start recording!</div>
+    </div>
+  </div>
+
+</div><!-- end .container -->
+
+<!-- Toast -->
+<div id="toast"></div>
+
+<script src="app.js"></script>
+</body>
+</html>
